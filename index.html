@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset=utf-8>
+		<title>Simplex Water</title>
+		<style>
+			body { margin: 0; }
+			canvas { width: 100%; height: 100% }
+		</style>
+	</head>
+	<body>
+		<script src="three.min.js"></script>
+		<script src="WebGL.js"></script>
+		<script>
+if (WEBGL.isWebGLAvailable() === false) {
+  document.body.appendChild(WEBGL.getWebGLErrorMessage());
+}
+
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+var renderer = new THREE.WebGLRenderer();
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+var geometry = new THREE.BoxGeometry(1, 1, 1);
+var material = new THREE.ShaderMaterial({
+  uniforms: {},
+  vertexShader: `
+  varying vec4 worldPosition;
+  void main() {
+    worldPosition = modelMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+  `,
+  fragmentShader: `
+  varying vec4 worldPosition;
+  void main() {
+    gl_FragColor = worldPosition;
+  }
+  `,
+});
+var cube = new THREE.Mesh(geometry, material);
+scene.add(cube);
+
+camera.position.z = 5;
+
+var then = 0;
+function animate(now) {
+  requestAnimationFrame(animate);
+
+  const dt = now - then;
+  then = now;
+
+  cube.rotation.x += dt * 0.001;
+  cube.rotation.y += dt * 0.001;
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+		</script>
+	</body>
+</html>
