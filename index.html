@@ -162,24 +162,96 @@ var material = new THREE.ShaderMaterial({
     vec4 d3 = d - sd3  + 3.0 * G4;
     vec4 d4 = d - ones + 4.0 * G4;
 
-    float t0 = max(0.6 - dot(d, d), 0.0);
-    float n0 = pow(t0, 4.0) * dot(g0, d);
+    float t0 = max(0.6 - dot(d , d ), 0.0);
     float t1 = max(0.6 - dot(d1, d1), 0.0);
-    float n1 = pow(t1, 4.0) * dot(g1, d1);
     float t2 = max(0.6 - dot(d2, d2), 0.0);
-    float n2 = pow(t2, 4.0) * dot(g2, d2);
     float t3 = max(0.6 - dot(d3, d3), 0.0);
-    float n3 = pow(t3, 4.0) * dot(g3, d3);
     float t4 = max(0.6 - dot(d4, d4), 0.0);
+
+    float n0 = pow(t0, 4.0) * dot(g0, d );
+    float n1 = pow(t1, 4.0) * dot(g1, d1);
+    float n2 = pow(t2, 4.0) * dot(g2, d2);
+    float n3 = pow(t3, 4.0) * dot(g3, d3);
     float n4 = pow(t4, 4.0) * dot(g4, d4);
 
     return 27.0 * (n0 + n1 + n2 + n3 + n4);
   }
 
+  // Analytical derivative of 4D simplex noise
+  vec4 dnoise(vec4 p) {
+    const float F4 = (sqrt(5.0) - 1.0) / 4.0;   // factor for 4D skewing
+    const float G4 = (5.0 - sqrt(5.0)) / 20.0;  // factor for 4D unskewing
+    const vec4 ones = vec4(1.0, 1.0, 1.0, 1.0); // used to sum components of vectors
+    const vec4 zeros = vec4(0.0, 0.0, 0.0, 0.0);
+
+    float s = dot(p, ones) * F4; // offset to get point into skew space
+    vec4 so = floor(p + s); // get simplex cell origin in skew space
+    float t = dot(so, ones) * G4; // offset to get simplex cell origin out of skew space
+    vec4 o = so - t; // get simplex cell origin in standard coordinates
+    vec4 d = p - o; // distance of point from simplex cell origin
+
+    // determine which of the 24 possible simplices we're in
+    vec4 rank = vec4(0.0, 0.0, 0.0, 0.0);
+
+    // TODO get rid of branching
+    if(d.x > d.y) rank.x++; else rank.y++;
+    if(d.x > d.z) rank.x++; else rank.z++;
+    if(d.x > d.w) rank.x++; else rank.w++;
+    if(d.y > d.z) rank.y++; else rank.z++;
+    if(d.y > d.w) rank.y++; else rank.w++;
+    if(d.z > d.w) rank.z++; else rank.w++;
+
+    // calculate simplex corner offsets
+    vec4 sd1 = max(rank - 2.0, zeros); // distance to second simplex corner (first being cell origin)
+    vec4 sd2 = sign(max(rank - 1.0, zeros)); // distance to third simplex corner
+    vec4 sd3 = sign(rank); // distance to fourth simplex corner
+    // fifth simplex corner is all ones
+
+    // get corners of simplex in skew space
+    vec4 sc1 = so + sd1;
+    vec4 sc2 = so + sd2;
+    vec4 sc3 = so + sd3;
+    vec4 sc4 = so + ones;
+
+    // get gradient for each simplex corner
+    vec4 g0 = selectGrad(hash4(so / 255.0));
+    vec4 g1 = selectGrad(hash4(sc1 / 255.0));
+    vec4 g2 = selectGrad(hash4(sc2 / 255.0));
+    vec4 g3 = selectGrad(hash4(sc3 / 255.0));
+    vec4 g4 = selectGrad(hash4(sc4 / 255.0));
+
+    // get distances from simplex corners in standard coordinates
+    vec4 d1 = d - sd1  +       G4;
+    vec4 d2 = d - sd2  + 2.0 * G4;
+    vec4 d3 = d - sd3  + 3.0 * G4;
+    vec4 d4 = d - ones + 4.0 * G4;
+
+    float t0 = max(0.6 - dot(d , d ), 0.0);
+    float t1 = max(0.6 - dot(d1, d1), 0.0);
+    float t2 = max(0.6 - dot(d2, d2), 0.0);
+    float t3 = max(0.6 - dot(d3, d3), 0.0);
+    float t4 = max(0.6 - dot(d4, d4), 0.0);
+
+    vec4 dn0 = 4.0 * pow(t0, 3.0) * -2.0 * d  * g0;
+    vec4 dn1 = 4.0 * pow(t1, 3.0) * -2.0 * d1 * g1;
+    vec4 dn2 = 4.0 * pow(t2, 3.0) * -2.0 * d2 * g2;
+    vec4 dn3 = 4.0 * pow(t3, 3.0) * -2.0 * d3 * g3;
+    vec4 dn4 = 4.0 * pow(t4, 3.0) * -2.0 * d4 * g4;
+
+    // normalization factor 27 matches the one used in noise()
+    return 27.0 * (dn0 + dn1 + dn2 + dn3 + dn4);
+  }
+
   void main() {
+    /*
     float v = noise(vec4(worldPosition.xyz * 5.0, time));
     v = (v + 1.0) / 2.0;
     gl_FragColor = vec4(v, v, v, 1.0);
+    */
+    vec4 dn = dnoise(vec4(worldPosition.xyz * 5.0, time));
+    //dn = normalize(dn);
+    //dn = (dn + 1.0) / 2.0;
+    gl_FragColor = vec4(dn.xyz, 1.0);
   }
   `,
 });
