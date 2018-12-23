@@ -12,6 +12,27 @@
 		<script src="three.min.js"></script>
 		<script src="WebGL.js"></script>
 		<script>
+
+const GRAD = new Int8Array([
+   0, 1, 1, 1,  0, 1, 1,-1,  0, 1,-1, 1,  0, 1,-1,-1,
+   0,-1, 1, 1,  0,-1, 1,-1,  0,-1,-1, 1,  0,-1,-1,-1,
+   1, 0, 1, 1,  1, 0, 1,-1,  1, 0,-1, 1,  1, 0,-1,-1,
+  -1, 0, 1, 1, -1, 0, 1,-1, -1, 0,-1, 1, -1, 0,-1,-1,
+   1, 1, 0, 1,  1, 1, 0,-1,  1,-1, 0, 1,  1,-1, 0,-1,
+  -1, 1, 0, 1, -1, 1, 0,-1, -1,-1, 0, 1, -1,-1, 0,-1,
+   1, 1, 1, 0,  1, 1,-1, 0,  1,-1, 1, 0,  1,-1,-1, 0,
+  -1, 1, 1, 0, -1, 1,-1, 0, -1,-1, 1, 0, -1,-1,-1, 0,
+]);
+// Dehydrate linearly maps an array with value range [-1, 1] to [0, 255].
+// Prepares a data array to be smuggled into the GPU as a texture.
+function dehydrate(vecs) {
+  result = new Uint8Array(vecs.length);
+  for (var i = 0; i < vecs.length; i++) {
+    result[i] = (vecs[i] + 1) * 127.5;
+  }
+  return result;
+}
+
 if (WEBGL.isWebGLAvailable() === false) {
   document.body.appendChild(WEBGL.getWebGLErrorMessage());
 }
@@ -23,9 +44,37 @@ var renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
+var textureLoader = new THREE.TextureLoader();
+
+var permTexture = new THREE.DataTexture(new Uint8Array([
+  174,110, 47,235,119,  9,247,218, 89, 60,206, 50,213, 77,129, 59,
+  201,238,117,139, 93,177,115,124,  0,227, 23,251, 20, 76,109,156,
+   71,151, 10,202, 51,122,210,137, 38, 97,231,  7,194, 42,140, 39,
+  121,185,147, 73,205,176,183,146,107, 12,179,198,154, 11, 45,118,
+  123, 94,204,226,  1, 63,148,113,164,  6, 24,192, 72,229,254, 48,
+  253,172, 52,223,222, 79, 78,171, 19, 32,155,249,233, 35,208,127,
+   33, 21,165,219,228,250, 99, 61,157, 22,125, 81,242,207,163,255,
+  108,138, 54,130, 36,232,182,101,191,132, 17,168,246,188, 95,136,
+    8,215,178,166, 43,114, 68,135,193, 70,104, 91,220,190,133, 86,
+  209,145,131, 85,241,106, 14,112,150,252,  5, 96,141, 64,103,217,
+  199,225,  3, 75,153, 57,195, 84,243,159,186,245,120,161,100,234,
+  216,144, 56,142,230, 66,187, 69, 90, 44,248,240,105,170, 49, 31,
+  196,197,  4, 88, 18,162,181, 58,152, 83, 62, 74,116,126,211,102,
+  214,  2,244,160, 16,180,236,169, 25, 46,128,239, 41, 30,167, 67,
+  212,175, 28, 82,224,221,111, 13, 87, 55, 80,200,189,134,184, 27,
+   29,173,203, 65, 53, 26,158,237,149, 34, 98, 15, 37, 40,143, 92
+]), 256, 1, THREE.AlphaFormat);
+permTexture.wrapS = permTexture.wrapT = THREE.RepeatWrapping;
+permTexture.needsUpdate = true;
+var gradTexture = new THREE.DataTexture(dehydrate(GRAD), 32, 1, THREE.RGBAFormat)
+gradTexture.needsUpdate = true;
+
 var geometry = new THREE.BoxGeometry(1, 1, 1);
 var material = new THREE.ShaderMaterial({
-  uniforms: {},
+  uniforms: {
+    perm: {value: permTexture},
+    grad: {value: gradTexture},
+  },
   vertexShader: `
   varying vec4 worldPosition;
   void main() {
@@ -34,12 +83,97 @@ var material = new THREE.ShaderMaterial({
   }
   `,
   fragmentShader: `
+  uniform float test;
+  uniform sampler2D perm;
+  uniform sampler2D grad;
+
   varying vec4 worldPosition;
+
+  float hash(float x) {
+    vec4 sample = texture2D(perm, vec2(x, 0.0));
+    return sample.w;
+  }
+  float hash4(vec4 v) {
+    return hash(v.w + hash(v.z + hash(v.y + hash(v.x))));
+  }
+  // get 1 of 32 gradients. input range: [0..1]
+  vec4 selectGrad(float x) {
+    // rehydrate: map range [0..1] to [-1..1]
+    return 2.0 * texture2D(grad, vec2(x, 0.0)) - 1.0;
+  }
+
+  // 4D simplex noise adapted for GLSL from Stefan Gustavson's Java implementation:
+  // http://staffwww.itn.liu.se/~stegu/simplexnoise/SimplexNoise.java
+  float noise(vec4 p) {
+    const float F4 = (sqrt(5.0) - 1.0) / 4.0;   // factor for 4D skewing
+    const float G4 = (5.0 - sqrt(5.0)) / 20.0;  // factor for 4D unskewing
+    const vec4 ones = vec4(1.0, 1.0, 1.0, 1.0); // used to sum components of vectors
+    const vec4 zeros = vec4(0.0, 0.0, 0.0, 0.0);
+
+    float s = dot(p, ones) * F4; // offset to get point into skew space
+    vec4 so = floor(p + s); // get simplex cell origin in skew space
+    float t = dot(so, ones) * G4; // offset to get simplex cell origin out of skew space
+    vec4 o = so - t; // get simplex cell origin in standard coordinates
+    vec4 d = p - o; // distance of point from simplex cell origin
+
+    // determine which of the 24 possible simplices we're in
+    vec4 rank = vec4(0.0, 0.0, 0.0, 0.0);
+
+    // TODO get rid of branching
+    if(d.x > d.y) rank.x++; else rank.y++;
+    if(d.x > d.z) rank.x++; else rank.z++;
+    if(d.x > d.w) rank.x++; else rank.w++;
+    if(d.y > d.z) rank.y++; else rank.z++;
+    if(d.y > d.w) rank.y++; else rank.w++;
+    if(d.z > d.w) rank.z++; else rank.w++;
+
+    // calculate simplex corner offsets
+    vec4 sd1 = max(rank - 2.0, zeros); // distance to second simplex corner (first being cell origin)
+    vec4 sd2 = sign(max(rank - 1.0, zeros)); // distance to third simplex corner
+    vec4 sd3 = sign(rank); // distance to fourth simplex corner
+    // fifth simplex corner is all ones
+
+    // get corners of simplex in skew space
+    vec4 sc1 = so + sd1;
+    vec4 sc2 = so + sd2;
+    vec4 sc3 = so + sd3;
+    vec4 sc4 = so + ones;
+
+    // get gradient for each simplex corner
+    vec4 g0 = selectGrad(hash4(so / 255.0));
+    vec4 g1 = selectGrad(hash4(sc1 / 255.0));
+    vec4 g2 = selectGrad(hash4(sc2 / 255.0));
+    vec4 g3 = selectGrad(hash4(sc3 / 255.0));
+    vec4 g4 = selectGrad(hash4(sc4 / 255.0));
+
+    // get distances from simplex corners in standard coordinates
+    vec4 d1 = d - sd1  +       G4;
+    vec4 d2 = d - sd2  + 2.0 * G4;
+    vec4 d3 = d - sd3  + 3.0 * G4;
+    vec4 d4 = d - ones + 4.0 * G4;
+
+    float t0 = max(0.6 - dot(d, d), 0.0);
+    float n0 = pow(t0, 4.0) * dot(g0, d);
+    float t1 = max(0.6 - dot(d1, d1), 0.0);
+    float n1 = pow(t1, 4.0) * dot(g1, d1);
+    float t2 = max(0.6 - dot(d2, d2), 0.0);
+    float n2 = pow(t2, 4.0) * dot(g2, d2);
+    float t3 = max(0.6 - dot(d3, d3), 0.0);
+    float n3 = pow(t3, 4.0) * dot(g3, d3);
+    float t4 = max(0.6 - dot(d4, d4), 0.0);
+    float n4 = pow(t4, 4.0) * dot(g4, d4);
+
+    return 27.0 * (n0 + n1 + n2 + n3 + n4);
+  }
+
   void main() {
-    gl_FragColor = worldPosition;
+    float v = noise(worldPosition * 5.0);
+    v = (v + 1.0) / 2.0;
+    gl_FragColor = vec4(v, v, v, 1.0);
   }
   `,
 });
+
 var cube = new THREE.Mesh(geometry, material);
 scene.add(cube);
 
