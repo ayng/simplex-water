@@ -45,7 +45,7 @@ var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHei
 var controls = new THREE.OrbitControls(camera);
 controls.autoRotate = true;
 
-camera.position.set(0, 1.5, 3);
+camera.position.set(2, 1, 2);
 controls.update();
 
 var renderer = new THREE.WebGLRenderer();
@@ -87,8 +87,10 @@ var material = new THREE.ShaderMaterial({
   uniforms: uniforms,
   vertexShader: `
   varying vec4 worldPosition;
+  varying vec4 fragNormal;
   void main() {
     worldPosition = modelMatrix * vec4(position, 1.0);
+    fragNormal = modelMatrix * vec4(normal, 0.0);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
   `,
@@ -98,6 +100,7 @@ var material = new THREE.ShaderMaterial({
   uniform sampler2D grad;
 
   varying vec4 worldPosition;
+  varying vec4 fragNormal;
 
   float hash(float x) {
     vec4 sample = texture2D(perm, vec2(x, 0.0));
@@ -248,10 +251,49 @@ var material = new THREE.ShaderMaterial({
     v = (v + 1.0) / 2.0;
     gl_FragColor = vec4(v, v, v, 1.0);
     */
+
+    /*
     vec4 dn = dnoise(vec4(worldPosition.xyz * 5.0, time));
-    //dn = normalize(dn);
-    //dn = (dn + 1.0) / 2.0;
     gl_FragColor = vec4(dn.xyz, 1.0);
+    */
+
+    const vec3 ones = vec3(1.0, 1.0, 1.0);
+    vec4 dn = dnoise(vec4(worldPosition.xyz * 5.0, time));
+
+    // TEMP
+    gl_FragColor = vec4(0.5 + dn.xyz * 0.02, 1.0);
+    return;
+
+    vec3 normal = fragNormal.xyz;
+
+    vec3 perturbedNormal;
+    // produces weird singularities; probably incorrect
+    /*
+    vec3 tangent = dn.xyz;
+    vec3 bitangent = cross(tangent, normal);
+    perturbedNormal = cross(bitangent, tangent);
+    */
+    // also looks wrong :(
+    vec3 tangent = dn.xyz;
+    tangent *= 0.06;
+    perturbedNormal = normal - dot(tangent, normal) * tangent;
+
+    vec3 l = vec3(0.0, 1.0, 0.0);
+
+    l = normalize(l);
+    perturbedNormal = normalize(perturbedNormal);
+
+    vec3 r = (2.0 * dot(l, perturbedNormal) * perturbedNormal) - l;
+    vec3 v = cameraPosition - worldPosition.xyz;
+    //r = normalize(r);
+    v = normalize(v);
+    float shininess = 20.0;
+    float specular = pow(dot(v, r), shininess); 
+
+    float diffuse = dot(perturbedNormal, l);
+    float ambient = 0.75;
+    vec3 c = vec3(0.4, 0.6, 1.0) * ambient + vec3(0.0, 0.1, 0.2) * diffuse + vec3(1.0, 0.0, 0.0) * specular;
+    gl_FragColor = vec4(c, 1.0);
   }
   `,
 });
