@@ -45,7 +45,7 @@ var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHei
 var controls = new THREE.OrbitControls(camera);
 controls.autoRotate = true;
 
-camera.position.set(2, 1, 2);
+camera.position.set(1, 2, 2);
 controls.update();
 
 var renderer = new THREE.WebGLRenderer();
@@ -246,39 +246,22 @@ var material = new THREE.ShaderMaterial({
   }
 
   void main() {
-    /*
-    float v = noise(vec4(worldPosition.xyz * 5.0, time));
-    v = (v + 1.0) / 2.0;
-    gl_FragColor = vec4(v, v, v, 1.0);
-    */
-
-    /*
-    vec4 dn = dnoise(vec4(worldPosition.xyz * 5.0, time));
-    gl_FragColor = vec4(dn.xyz, 1.0);
-    */
-
     const vec3 ones = vec3(1.0, 1.0, 1.0);
     vec4 dn = dnoise(vec4(worldPosition.xyz * 5.0, time));
-
-    // TEMP
-    gl_FragColor = vec4(0.5 + dn.xyz * 0.02, 1.0);
-    return;
 
     vec3 normal = fragNormal.xyz;
 
     vec3 perturbedNormal;
-    // produces weird singularities; probably incorrect
-    /*
-    vec3 tangent = dn.xyz;
-    vec3 bitangent = cross(tangent, normal);
-    perturbedNormal = cross(bitangent, tangent);
-    */
-    // also looks wrong :(
-    vec3 tangent = dn.xyz;
-    tangent *= 0.06;
-    perturbedNormal = normal - dot(tangent, normal) * tangent;
 
-    vec3 l = vec3(0.0, 1.0, 0.0);
+    // having some trouble making the shading look right so i'm making an
+    // assumption here to simplify things
+
+    // concession: assume the normal vector is pointing up (false for 5/6
+    // faces) then the perturbed normal is the cross product of the
+    // partial derivative by x and partial derivative by z
+    perturbedNormal = vec3(-dn.x, 1.0, -dn.z);
+
+    vec3 l = vec3(-1.0, 1.0, -1.0);
 
     l = normalize(l);
     perturbedNormal = normalize(perturbedNormal);
@@ -291,8 +274,8 @@ var material = new THREE.ShaderMaterial({
     float specular = pow(dot(v, r), shininess); 
 
     float diffuse = dot(perturbedNormal, l);
-    float ambient = 0.75;
-    vec3 c = vec3(0.4, 0.6, 1.0) * ambient + vec3(0.0, 0.1, 0.2) * diffuse + vec3(1.0, 0.0, 0.0) * specular;
+    float ambient = 0.5;
+    vec3 c = vec3(0.4, 0.6, 1.0) * ambient + vec3(0.0, 0.02, 0.04) * diffuse + vec3(1.0, 0.5, 0.0) * specular;
     gl_FragColor = vec4(c, 1.0);
   }
   `,
